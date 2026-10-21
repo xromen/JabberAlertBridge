@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.local/
+.vs/
+.idea/
+.env
+secrets/
+*.user
+*.suo
+artifacts/

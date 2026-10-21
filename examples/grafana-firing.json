@@ -1,0 +1,27 @@
+{
+  "receiver": "jabber",
+  "orgId": 1,
+  "status": "firing",
+  "title": "InstanceDown",
+  "groupKey": "demo-instance-down",
+  "truncatedAlerts": 0,
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "InstanceDown",
+        "instance": "node01:9100",
+        "severity": "critical",
+        "environment": "production"
+      },
+      "annotations": {
+        "summary": "Сервер недоступен",
+        "description": "Node Exporter не отвечает более 2 минут"
+      },
+      "startsAt": "2026-10-21T08:00:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "https://grafana.company.local/alerting/list",
+      "fingerprint": "demo-fingerprint"
+    }
+  ]
+}

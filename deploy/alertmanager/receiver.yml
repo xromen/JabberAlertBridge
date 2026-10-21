@@ -1,0 +1,10 @@
+# Merge with the existing Alertmanager receivers; configure routing separately.
+receivers:
+  - name: jabber
+    webhook_configs:
+      - url: http://jabber-alert-bridge:8080/api/webhooks/alerts
+        send_resolved: true
+        http_config:
+          basic_auth:
+            username: monitoring
+            password_file: /etc/alertmanager/secrets/jabber-webhook-password

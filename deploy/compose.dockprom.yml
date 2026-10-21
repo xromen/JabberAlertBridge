@@ -1,0 +1,27 @@
+services:
+  jabber-alert-bridge:
+    image: jabber-alert-bridge:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 35s
+    environment:
+      ConnectionStrings__Postgres: ${JABBER_ALERT_POSTGRES_CONNECTION_STRING:?Set database connection string}
+      Xmpp__Host: ${JABBER_ALERT_XMPP_HOST:?Set XMPP host}
+      Xmpp__Jid: ${JABBER_ALERT_XMPP_JID:?Set XMPP JID}
+      Xmpp__Password: ${JABBER_ALERT_XMPP_PASSWORD:?Set XMPP password}
+      Xmpp__RoomJid: ${JABBER_ALERT_XMPP_ROOM:?Set room JID}
+      Xmpp__Nickname: ${JABBER_ALERT_XMPP_NICKNAME:-Monitoring Bot}
+      Xmpp__RoomPassword: ${JABBER_ALERT_XMPP_ROOM_PASSWORD:-}
+      WebhookAuth__Username: ${JABBER_ALERT_WEBHOOK_USERNAME:-monitoring}
+      WebhookAuth__Password: ${JABBER_ALERT_WEBHOOK_PASSWORD:?Set webhook password}
+    expose:
+      - "8080"
+    networks:
+      - monitor-net
+
+networks:
+  monitor-net:
+    external: true
+    name: ${JABBER_ALERT_DOCKER_NETWORK:-monitor-net}

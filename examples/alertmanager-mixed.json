@@ -1,0 +1,21 @@
+{
+  "receiver": "jabber",
+  "version": "4",
+  "status": "firing",
+  "groupKey": "demo-mixed",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": { "alertname": "DiskSpaceLow", "instance": "node02:9100", "severity": "warning" },
+      "annotations": { "summary": "Свободно менее 10% диска" },
+      "startsAt": "2026-10-21T08:00:00Z"
+    },
+    {
+      "status": "resolved",
+      "labels": { "alertname": "InstanceDown", "instance": "node01:9100", "severity": "critical" },
+      "annotations": { "summary": "Сервер снова доступен" },
+      "startsAt": "2026-10-21T07:00:00Z",
+      "endsAt": "2026-10-21T08:01:00Z"
+    }
+  ]
+}

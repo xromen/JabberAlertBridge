@@ -1,0 +1,57 @@
+name: jabber-alert-bridge
+
+x-bridge: &bridge
+  image: jabber-alert-bridge:local
+  build: .
+  environment:
+    ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=jabber_alert_bridge;Username=jabber_bridge;Password=${JABBER_ALERT_DB_PASSWORD:?Set JABBER_ALERT_DB_PASSWORD};Timeout=5;Command Timeout=10"
+    Xmpp__Host: ${JABBER_ALERT_XMPP_HOST:?Set JABBER_ALERT_XMPP_HOST}
+    Xmpp__Jid: ${JABBER_ALERT_XMPP_JID:?Set JABBER_ALERT_XMPP_JID}
+    Xmpp__Password: ${JABBER_ALERT_XMPP_PASSWORD:?Set JABBER_ALERT_XMPP_PASSWORD}
+    Xmpp__RoomJid: ${JABBER_ALERT_XMPP_ROOM:?Set JABBER_ALERT_XMPP_ROOM}
+    Xmpp__Nickname: ${JABBER_ALERT_XMPP_NICKNAME:-Monitoring Bot}
+    Xmpp__RoomPassword: ${JABBER_ALERT_XMPP_ROOM_PASSWORD:-}
+    WebhookAuth__Username: ${JABBER_ALERT_WEBHOOK_USERNAME:-monitoring}
+    WebhookAuth__Password: ${JABBER_ALERT_WEBHOOK_PASSWORD:?Set JABBER_ALERT_WEBHOOK_PASSWORD}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - monitor-net
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jabber_alert_bridge
+      POSTGRES_USER: jabber_bridge
+      POSTGRES_PASSWORD: ${JABBER_ALERT_DB_PASSWORD:?Set JABBER_ALERT_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jabber_bridge -d jabber_alert_bridge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - monitor-net
+
+  migrate:
+    <<: *bridge
+    profiles: ["tools"]
+    command: ["--migrate"]
+    restart: "no"
+
+  jabber-alert-bridge:
+    <<: *bridge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    stop_grace_period: 35s
+
+networks:
+  monitor-net:
+
+volumes:
+  postgres-data:

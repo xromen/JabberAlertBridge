@@ -1,0 +1,6 @@
+# Add this entry to scrape_configs in the existing Prometheus configuration.
+scrape_configs:
+  - job_name: jabber-alert-bridge
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["jabber-alert-bridge:8080"]

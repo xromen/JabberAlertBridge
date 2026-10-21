@@ -1,0 +1,45 @@
+groups:
+  - name: jabber-alert-bridge
+    rules:
+      - alert: JabberBridgeDown
+        expr: up{job="jabber-alert-bridge"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "JabberAlertBridge недоступен для мониторинга"
+      - alert: JabberBridgeXmppUnavailable
+        expr: jabber_alert_xmpp_ready == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Бот JabberAlertBridge не подключён к конференции"
+      - alert: JabberBridgeDatabaseUnavailable
+        expr: jabber_alert_database_ready == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Хранилище очереди JabberAlertBridge недоступно"
+      - alert: JabberBridgeQueueOld
+        expr: jabber_alert_queue_oldest_age_seconds > 600
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Сообщение JabberAlertBridge ожидает более 10 минут"
+      - alert: JabberBridgeQueueAlmostFull
+        expr: jabber_alert_queue_pending / jabber_alert_queue_capacity > 0.8
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Очередь JabberAlertBridge заполнена более чем на 80%"
+      - alert: JabberBridgeDeadMessages
+        expr: jabber_alert_queue_dead > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "В JabberAlertBridge есть сообщения для ручного разбора"

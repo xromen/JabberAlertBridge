@@ -1,0 +1,7 @@
+.git
+.local
+**/bin
+**/obj
+.env
+secrets
+artifacts
