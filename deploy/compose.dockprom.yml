@@ -11,9 +11,7 @@ services:
       Xmpp__Host: ${JABBER_ALERT_XMPP_HOST:?Set XMPP host}
       Xmpp__Jid: ${JABBER_ALERT_XMPP_JID:?Set XMPP JID}
       Xmpp__Password: ${JABBER_ALERT_XMPP_PASSWORD:?Set XMPP password}
-      Xmpp__RoomJid: ${JABBER_ALERT_XMPP_ROOM:?Set room JID}
-      Xmpp__Nickname: ${JABBER_ALERT_XMPP_NICKNAME:-Monitoring Bot}
-      Xmpp__RoomPassword: ${JABBER_ALERT_XMPP_ROOM_PASSWORD:-}
+      Xmpp__RecipientJids: ${JABBER_ALERT_XMPP_RECIPIENT_JIDS:?Set recipient JIDs}
       WebhookAuth__Username: ${JABBER_ALERT_WEBHOOK_USERNAME:-monitoring}
       WebhookAuth__Password: ${JABBER_ALERT_WEBHOOK_PASSWORD:?Set webhook password}
     expose:

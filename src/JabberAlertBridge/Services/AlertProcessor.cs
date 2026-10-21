@@ -12,15 +12,26 @@ public sealed class AlertProcessor(
     IOutgoingMessageQueue queue,
     IOptions<XmppOptions> xmpp)
 {
-    public async Task<EnqueueResult> ProcessAsync(AlertWebhookRequest request, CancellationToken cancellationToken)
+    public async Task<EnqueueResult> ProcessAsync(
+        AlertWebhookRequest request,
+        CancellationToken cancellationToken)
     {
         AlertNotification notification = mapper.Map(request);
         IReadOnlyList<string> texts = formatter.Format(notification);
-        IReadOnlyList<Guid> ids = texts.Count == 0 ? [] :
-            await queue.EnqueueAsync(texts, notification.Source, xmpp.Value.RoomJid, cancellationToken);
+
+        IReadOnlyList<Guid> ids = texts.Count == 0
+            ? []
+            : await queue.EnqueueAsync(
+                texts,
+                notification.Source,
+                xmpp.Value.RecipientJids,
+                cancellationToken);
 
         return new EnqueueResult(notification.Source, notification.Alerts.Count, ids);
     }
 }
 
-public sealed record EnqueueResult(string Source, int AlertCount, IReadOnlyList<Guid> MessageIds);
+public sealed record EnqueueResult(
+    string Source,
+    int AlertCount,
+    IReadOnlyList<Guid> MessageIds);

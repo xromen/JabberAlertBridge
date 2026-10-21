@@ -13,40 +13,55 @@ public sealed class PostgresMessageQueue(
     private readonly DeliveryOptions _options = options.Value;
 
     public async Task<IReadOnlyList<Guid>> EnqueueAsync(
-        IReadOnlyList<string> texts, string source, string roomJid, CancellationToken cancellationToken)
+        IReadOnlyList<string> texts,
+        string source,
+        IReadOnlyList<string> recipientJids,
+        CancellationToken cancellationToken)
     {
+        string[] recipients = recipientJids.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        long requiredCount = (long)texts.Count * recipients.Length;
+
         await using AlertDbContext db = await contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         // All enqueue and requeue operations use the same lock to enforce capacity and commit order.
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(742341902)", cancellationToken);
+
         int count = await db.OutgoingMessages.CountAsync(
             message => message.Status == MessageStatus.Pending || message.Status == MessageStatus.Processing,
             cancellationToken);
-        if (texts.Count > _options.MaxPendingMessages - count)
+        if (requiredCount > _options.MaxPendingMessages - count)
         {
             throw new QueueFullException();
         }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        var messages = texts.Select(text => new OutgoingMessage
-        {
-            Id = Guid.NewGuid(),
-            Source = source,
-            RoomJid = roomJid,
-            Content = text,
-            CreatedAt = now,
-            NextAttemptAt = now
-        }).ToList();
+        var messages = new List<OutgoingMessage>();
 
         // One statement at a time guarantees that sequence matches the order of message parts.
-        foreach (OutgoingMessage message in messages)
+        foreach (string text in texts)
         {
-            db.OutgoingMessages.Add(message);
-            await db.SaveChangesAsync(cancellationToken);
+            foreach (string recipient in recipients)
+            {
+                var message = new OutgoingMessage
+                {
+                    Id = Guid.NewGuid(),
+                    Source = source,
+                    RecipientJid = recipient,
+                    Content = text,
+                    CreatedAt = now,
+                    NextAttemptAt = now
+                };
+
+                db.OutgoingMessages.Add(message);
+                await db.SaveChangesAsync(cancellationToken);
+
+                messages.Add(message);
+            }
         }
 
         await transaction.CommitAsync(cancellationToken);
+
         return messages.Select(message => message.Id).ToArray();
     }
 
@@ -54,7 +69,8 @@ public sealed class PostgresMessageQueue(
     {
         await using AlertDbContext db = await contextFactory.CreateDbContextAsync(cancellationToken);
         int leaseSeconds = _options.LeaseDurationSeconds;
-        // An earlier active message blocks later ones, including while it is waiting for a retry.
+
+        // Preserve order for each recipient without blocking delivery to other users.
         List<OutgoingMessage> messages = await db.OutgoingMessages.FromSqlInterpolated($"""
             WITH picked AS (
                 SELECT id FROM outgoing_messages m
@@ -62,7 +78,9 @@ public sealed class PostgresMessageQueue(
                     OR status = 'processing' AND lease_until < now())
                   AND NOT EXISTS (
                     SELECT 1 FROM outgoing_messages earlier
-                    WHERE earlier.status IN ('pending', 'processing') AND earlier.sequence < m.sequence)
+                    WHERE earlier.status IN ('pending', 'processing')
+                      AND earlier.recipient_jid = m.recipient_jid
+                      AND earlier.sequence < m.sequence)
                 ORDER BY sequence
                 FOR UPDATE SKIP LOCKED LIMIT 1
             )
@@ -75,7 +93,10 @@ public sealed class PostgresMessageQueue(
         return messages.SingleOrDefault();
     }
 
-    public async Task CompleteAsync(OutgoingMessage message, string workerId, CancellationToken cancellationToken)
+    public async Task CompleteAsync(
+        OutgoingMessage message,
+        string workerId,
+        CancellationToken cancellationToken)
     {
         await using AlertDbContext db = await contextFactory.CreateDbContextAsync(cancellationToken);
         int rows = await OwnedMessage(db, message, workerId).ExecuteUpdateAsync(setters => setters
@@ -84,14 +105,21 @@ public sealed class PostgresMessageQueue(
             .SetProperty(item => item.LockedBy, (string?)null)
             .SetProperty(item => item.LeaseUntil, (DateTimeOffset?)null)
             .SetProperty(item => item.LastError, (string?)null), cancellationToken);
+
         CheckLease(rows);
     }
 
-    public async Task RetryAsync(OutgoingMessage message, string workerId, DateTimeOffset nextAttemptAt,
-        string error, bool permanent, CancellationToken cancellationToken)
+    public async Task RetryAsync(
+        OutgoingMessage message,
+        string workerId,
+        DateTimeOffset nextAttemptAt,
+        string error,
+        bool permanent,
+        CancellationToken cancellationToken)
     {
         await using AlertDbContext db = await contextFactory.CreateDbContextAsync(cancellationToken);
         bool dead = permanent || (_options.MaxAttempts > 0 && message.Attempts >= _options.MaxAttempts);
+
         int rows = await OwnedMessage(db, message, workerId).ExecuteUpdateAsync(setters => setters
             .SetProperty(item => item.Status, dead ? MessageStatus.Dead : MessageStatus.Pending)
             .SetProperty(item => item.DeadAt, dead ? DateTimeOffset.UtcNow : (DateTimeOffset?)null)
@@ -99,10 +127,14 @@ public sealed class PostgresMessageQueue(
             .SetProperty(item => item.LastError, error.Length <= 512 ? error : error.Substring(0, 512))
             .SetProperty(item => item.LockedBy, (string?)null)
             .SetProperty(item => item.LeaseUntil, (DateTimeOffset?)null), cancellationToken);
+
         CheckLease(rows);
     }
 
-    private static IQueryable<OutgoingMessage> OwnedMessage(AlertDbContext db, OutgoingMessage message, string workerId)
+    private static IQueryable<OutgoingMessage> OwnedMessage(
+        AlertDbContext db,
+        OutgoingMessage message,
+        string workerId)
     {
         return db.OutgoingMessages.Where(item => item.Id == message.Id && item.LockedBy == workerId
             && item.Attempts == message.Attempts && item.Status == MessageStatus.Processing);

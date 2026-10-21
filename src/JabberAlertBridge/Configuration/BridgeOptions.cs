@@ -18,15 +18,13 @@ public sealed class XmppOptions
     [Required]
     public string Password { get; init; } = "";
 
-    [Required]
-    public string RoomJid { get; init; } = "";
+    public string[] RecipientJids { get; set; } = [];
 
-    [Required, StringLength(128)]
-    public string Nickname { get; init; } = "Monitoring Bot";
-
-    public string RoomPassword { get; init; } = "";
     public bool RequireTls { get; init; } = true;
+
     public bool ValidateCertificate { get; init; }
+
+    public bool RequireServerAcknowledgement { get; init; } = true;
 
     [Range(1, 120)]
     public int ConnectTimeoutSeconds { get; init; } = 15;
@@ -94,5 +92,6 @@ public sealed class AlertFormattingOptions
     public int MaxRequestBodyBytes { get; init; } = 262144;
 
     public bool IncludeLinks { get; init; } = true;
+
     public bool SendResolved { get; init; } = true;
 }

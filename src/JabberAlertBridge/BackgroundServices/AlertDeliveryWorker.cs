@@ -45,6 +45,7 @@ public sealed class AlertDeliveryWorker(
             catch (Exception exception)
             {
                 logger.LogWarning("Ошибка обработчика очереди: {ErrorType}", exception.GetType().Name);
+
                 await PauseAsync(stoppingToken);
             }
         }
@@ -54,36 +55,72 @@ public sealed class AlertDeliveryWorker(
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(_options.SendTimeoutSeconds));
+
         try
         {
+            if (message.LastError?.StartsWith("legacy-room-message:", StringComparison.Ordinal) == true)
+            {
+                throw new XmppSendException("legacy-room-message: manual-review-required", permanent: true);
+            }
+
             using (metrics.SendDuration.NewTimer())
             {
-                await sender.SendToRoomAsync(message.RoomJid, message.Content, timeout.Token);
+                await sender.SendAsync(message.Id, message.RecipientJid, message.Content, timeout.Token);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Leave the lease intact: a send in flight may already have reached the room.
+            // Leave the lease intact: the server may already have accepted the message.
             throw;
         }
         catch (Exception exception)
         {
-            metrics.Failures.Inc();
-            double exponential = _options.RetryInitialSeconds * Math.Pow(2, Math.Min(message.Attempts - 1, 20));
-            double delay = Math.Min(_options.RetryMaxSeconds, exponential * (0.9 + (Random.Shared.NextDouble() * 0.2)));
-            DateTimeOffset next = DateTimeOffset.UtcNow.AddSeconds(delay);
-            string error = exception is XmppSendException sendError ? sendError.ErrorCode : exception.GetType().Name;
-            bool permanent = exception is XmppSendException { Permanent: true };
-            await queue.RetryAsync(message, _workerId, next, error, permanent, stoppingToken);
-            logger.LogWarning("Сообщение {MessageId}: попытка {Attempt}, ошибка {ErrorCode}, следующая попытка {NextAttemptAt}, постоянная {Permanent}",
-                message.Id, message.Attempts, error, next, permanent);
+            await ScheduleRetryAsync(message, exception, stoppingToken);
+
             return;
         }
 
         // A failure here must not be treated as a failed XMPP send. The lease will expire after a database outage.
         await queue.CompleteAsync(message, _workerId, stoppingToken);
+
         metrics.Sent.Inc();
-        logger.LogInformation("Сообщение {MessageId} доставлено, попытка {Attempt}", message.Id, message.Attempts);
+        logger.LogInformation("Сообщение {MessageId} отправлено, попытка {Attempt}", message.Id, message.Attempts);
+    }
+
+    private async Task ScheduleRetryAsync(
+        OutgoingMessage message,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        metrics.Failures.Inc();
+
+        DateTimeOffset next = DateTimeOffset.UtcNow.Add(GetRetryDelay(message.Attempts));
+
+        string error = exception is XmppSendException sendError
+            ? sendError.ErrorCode
+            : exception.GetType().Name;
+
+        bool permanent = exception is XmppSendException { Permanent: true };
+
+        await queue.RetryAsync(message, _workerId, next, error, permanent, cancellationToken);
+
+        logger.LogWarning(
+            "Сообщение {MessageId}: попытка {Attempt}, ошибка {ErrorCode}, "
+                + "следующая попытка {NextAttemptAt}, постоянная {Permanent}",
+            message.Id,
+            message.Attempts,
+            error,
+            next,
+            permanent);
+    }
+
+    private TimeSpan GetRetryDelay(int attempts)
+    {
+        double exponential = _options.RetryInitialSeconds * Math.Pow(2, Math.Min(attempts - 1, 20));
+        double jitter = 0.9 + (Random.Shared.NextDouble() * 0.2);
+        double delay = Math.Min(_options.RetryMaxSeconds, exponential * jitter);
+
+        return TimeSpan.FromSeconds(delay);
     }
 
     private Task PauseAsync(CancellationToken cancellationToken)

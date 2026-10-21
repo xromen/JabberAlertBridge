@@ -11,9 +11,12 @@ public sealed class AlertDbContextFactory : IDesignTimeDbContextFactory<AlertDbC
         var configuration = new ConfigurationManager();
         configuration.AddEnvironmentVariables();
         configuration.AddSecretFiles();
+
         string connectionString = configuration.GetConnectionString("Postgres")
             ?? "Host=localhost;Database=jabber_alert_bridge;Username=jabber_bridge";
+
         var options = new DbContextOptionsBuilder<AlertDbContext>().UseNpgsql(connectionString).Options;
+
         return new AlertDbContext(options);
     }
 }

@@ -67,3 +67,41 @@ BEGIN
     END IF;
 END $EF$;
 COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261021024244_DirectUserRecipients') THEN
+    ALTER TABLE outgoing_messages RENAME COLUMN room_jid TO recipient_jid;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261021024244_DirectUserRecipients') THEN
+    UPDATE outgoing_messages
+    SET status = 'dead',
+        dead_at = COALESCE(dead_at, now()),
+        locked_by = NULL,
+        lease_until = NULL,
+        last_error = left('legacy-room-message: ' || COALESCE(last_error, 'manual-review-required'), 512)
+    WHERE status IN ('pending', 'processing', 'dead');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261021024244_DirectUserRecipients') THEN
+    CREATE INDEX "IX_outgoing_messages_recipient_jid_sequence" ON outgoing_messages (recipient_jid, sequence) WHERE status IN ('pending', 'processing');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261021024244_DirectUserRecipients') THEN
+    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261021024244_DirectUserRecipients', '10.0.6');
+    END IF;
+END $EF$;
+COMMIT;

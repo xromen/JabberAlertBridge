@@ -6,6 +6,7 @@ UPDATE outgoing_messages
 SET status = 'pending', attempts = 0, next_attempt_at = now(),
     dead_at = NULL, locked_by = NULL, lease_until = NULL, last_error = NULL
 WHERE id = :'message_id'::uuid AND status = 'dead'
+  AND COALESCE(last_error, '') NOT LIKE 'legacy-room-message:%'
   AND (SELECT count(*) FROM outgoing_messages WHERE status IN ('pending', 'processing')) < :capacity
-RETURNING id, sequence, room_jid, status;
+RETURNING id, sequence, recipient_jid, status;
 COMMIT;

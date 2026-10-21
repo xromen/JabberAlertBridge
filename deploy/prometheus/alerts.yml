@@ -14,7 +14,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Бот JabberAlertBridge не подключён к конференции"
+          summary: "XMPP-соединение JabberAlertBridge не готово к личной рассылке"
       - alert: JabberBridgeDatabaseUnavailable
         expr: jabber_alert_database_ready == 0
         for: 1m

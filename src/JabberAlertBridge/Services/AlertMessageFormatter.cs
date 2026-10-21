@@ -20,7 +20,18 @@ public sealed class AlertMessageFormatter(IOptions<AlertFormattingOptions> optio
             return [];
         }
 
+        IReadOnlyList<string> blocks = CreateBlocks(notification);
+        string text = string.Join("\n\n", blocks);
+
+        return text.Length <= _options.MaxMessageLength
+            ? [text]
+            : SplitBlocks(blocks);
+    }
+
+    private IReadOnlyList<string> CreateBlocks(AlertNotification notification)
+    {
         var blocks = new List<string>();
+
         if (notification.Alerts.Count > 1)
         {
             blocks.Add($"Уведомление {notification.Source}: {notification.Alerts.Count} алертов");
@@ -36,16 +47,16 @@ public sealed class AlertMessageFormatter(IOptions<AlertFormattingOptions> optio
             blocks.Add(FormatAlert(alert));
         }
 
-        string text = string.Join("\n\n", blocks);
-        if (text.Length <= _options.MaxMessageLength)
-        {
-            return [text];
-        }
+        return blocks;
+    }
 
+    private IReadOnlyList<string> SplitBlocks(IReadOnlyList<string> blocks)
+    {
         // Reserve room for part numbers before splitting, including very large requests.
         int contentLimit = _options.MaxMessageLength - 32;
         var parts = new List<string>();
         var current = new StringBuilder();
+
         foreach (string block in blocks)
         {
             if (current.Length > 0 && current.Length + 2 + block.Length > contentLimit)
@@ -62,6 +73,7 @@ public sealed class AlertMessageFormatter(IOptions<AlertFormattingOptions> optio
                 }
 
                 current.Append(block);
+
                 continue;
             }
 
@@ -97,35 +109,26 @@ public sealed class AlertMessageFormatter(IOptions<AlertFormattingOptions> optio
     private string FormatAlert(AlertItem alert)
     {
         string status = alert.Status == "firing" ? "🔴 ПРОБЛЕМА" : "🟢 ВОССТАНОВЛЕНО";
-        string severity = alert.Severity?.ToLowerInvariant() switch
-        {
-            "critical" => "КРИТИЧЕСКИЙ",
-            "warning" => "ПРЕДУПРЕЖДЕНИЕ",
-            "info" or "information" => "ИНФОРМАЦИЯ",
-            null or "" => "НЕ УКАЗАН",
-            _ => alert.Severity
-        };
-
         var text = new StringBuilder();
+
         text.AppendLine($"{status} — {alert.Name}");
-        text.AppendLine($"Приоритет: {severity}");
+        text.AppendLine($"Приоритет: {FormatSeverity(alert.Severity)}");
+
         AddLine(text, "Сервер", alert.Instance ?? "не указан");
         AddLine(text, "Сервис", alert.Service);
         AddLine(text, "Окружение", alert.Environment);
         AddLine(text, "Проблема", alert.Summary);
+
         if (!string.IsNullOrWhiteSpace(alert.Description) && alert.Description != alert.Summary)
         {
             text.AppendLine(alert.Description);
         }
 
         text.AppendLine($"Начало: {FormatTime(alert.StartsAt)}");
+
         if (alert.Status == "resolved")
         {
-            text.AppendLine($"Окончание: {FormatTime(alert.EndsAt)}");
-            if (alert.StartsAt is { } start && alert.EndsAt is { } end && end >= start)
-            {
-                text.AppendLine($"Длительность: {(end - start).ToString(@"d\.hh\:mm\:ss", CultureInfo.InvariantCulture)}");
-            }
+            AddResolution(text, alert);
         }
 
         if (_options.IncludeLinks && alert.Link is not null)
@@ -138,8 +141,38 @@ public sealed class AlertMessageFormatter(IOptions<AlertFormattingOptions> optio
 
     private string FormatTime(DateTimeOffset? value)
     {
-        return value is null ? "не указано" :
-            $"{TimeZoneInfo.ConvertTime(value.Value, _timeZone).ToString("dd.MM.yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture)} ({_timeZone.Id})";
+        if (value is null)
+        {
+            return "не указано";
+        }
+
+        DateTimeOffset localTime = TimeZoneInfo.ConvertTime(value.Value, _timeZone);
+        string formatted = localTime.ToString("dd.MM.yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture);
+
+        return $"{formatted} ({_timeZone.Id})";
+    }
+
+    private void AddResolution(StringBuilder text, AlertItem alert)
+    {
+        text.AppendLine($"Окончание: {FormatTime(alert.EndsAt)}");
+
+        if (alert.StartsAt is { } start && alert.EndsAt is { } end && end >= start)
+        {
+            string duration = (end - start).ToString(@"d\.hh\:mm\:ss", CultureInfo.InvariantCulture);
+            text.AppendLine($"Длительность: {duration}");
+        }
+    }
+
+    private static string FormatSeverity(string? severity)
+    {
+        return severity?.ToLowerInvariant() switch
+        {
+            "critical" => "КРИТИЧЕСКИЙ",
+            "warning" => "ПРЕДУПРЕЖДЕНИЕ",
+            "info" or "information" => "ИНФОРМАЦИЯ",
+            null or "" => "НЕ УКАЗАН",
+            _ => severity
+        };
     }
 
     private static void AddLine(StringBuilder text, string label, string? value)
@@ -153,9 +186,11 @@ public sealed class AlertMessageFormatter(IOptions<AlertFormattingOptions> optio
     private static string CleanXmlText(string text)
     {
         var result = new StringBuilder(text.Length);
+
         for (int i = 0; i < text.Length; i++)
         {
             char value = text[i];
+
             if (XmlConvert.IsXmlChar(value))
             {
                 result.Append(value);

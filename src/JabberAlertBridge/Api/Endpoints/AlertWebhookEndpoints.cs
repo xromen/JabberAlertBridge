@@ -14,6 +14,7 @@ namespace JabberAlertBridge.Api.Endpoints;
 public static class AlertWebhookEndpoints
 {
     public const string Path = "/api/webhooks/alerts";
+
     private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web) { MaxDepth = 32 };
 
     public static void MapAlertWebhooks(this WebApplication app)
@@ -30,6 +31,7 @@ public static class AlertWebhookEndpoints
         }
 
         var timer = Stopwatch.StartNew();
+
         try
         {
             await next(context);
@@ -37,16 +39,22 @@ public static class AlertWebhookEndpoints
         finally
         {
             string source = context.Items["WebhookSource"] as string ?? "webhook";
+
             context.RequestServices.GetRequiredService<BridgeMetrics>().Webhooks
                 .WithLabels(source, context.Response.StatusCode.ToString(CultureInfo.InvariantCulture)).Inc();
+
             context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Webhook")
                 .LogInformation("Webhook {RequestId}: {StatusCode}, источник {Source}, длительность {ElapsedMs} мс",
                     context.TraceIdentifier, context.Response.StatusCode, source, timer.Elapsed.TotalMilliseconds);
         }
     }
 
-    private static async Task<IResult> HandleAsync(HttpContext context, AlertProcessor processor,
-        IOptions<AlertFormattingOptions> options, BridgeMetrics metrics, ILogger<AlertProcessor> logger)
+    private static async Task<IResult> HandleAsync(
+        HttpContext context,
+        AlertProcessor processor,
+        IOptions<AlertFormattingOptions> options,
+        BridgeMetrics metrics,
+        ILogger<AlertProcessor> logger)
     {
         if (!context.Request.HasJsonContentType())
         {
@@ -54,6 +62,7 @@ public static class AlertWebhookEndpoints
         }
 
         int limit = options.Value.MaxRequestBodyBytes;
+
         if (context.Request.ContentLength > limit)
         {
             return Results.Problem(statusCode: 413, title: "Превышен размер запроса.");
@@ -61,29 +70,21 @@ public static class AlertWebhookEndpoints
 
         try
         {
-            using var body = new MemoryStream();
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = await context.Request.Body.ReadAsync(buffer, context.RequestAborted)) > 0)
-            {
-                if (body.Length + read > limit)
-                {
-                    return Results.Problem(statusCode: 413, title: "Превышен размер запроса.");
-                }
-
-                body.Write(buffer, 0, read);
-            }
-
-            body.Position = 0;
-            AlertWebhookRequest request = await JsonSerializer.DeserializeAsync<AlertWebhookRequest>(body, s_jsonOptions, context.RequestAborted)
-                ?? throw new WebhookValidationException("Требуется JSON-объект уведомления.");
+            AlertWebhookRequest request = await ReadRequestAsync(context.Request, limit, context.RequestAborted);
             EnqueueResult result = await processor.ProcessAsync(request, context.RequestAborted);
+
             context.Items["WebhookSource"] = result.Source;
             metrics.Enqueued.Inc(result.MessageIds.Count);
+
             logger.LogInformation("Запрос {RequestId}: алертов {AlertCount}, сохранено сообщений {QueuedCount}",
                 context.TraceIdentifier, result.AlertCount, result.MessageIds.Count);
 
-            return Results.Json(new { status = "queued", messageIds = result.MessageIds, queuedCount = result.MessageIds.Count }, statusCode: 202);
+            return Results.Json(new
+            {
+                status = "queued",
+                messageIds = result.MessageIds,
+                queuedCount = result.MessageIds.Count
+            }, statusCode: 202);
         }
         catch (JsonException)
         {
@@ -96,6 +97,7 @@ public static class AlertWebhookEndpoints
         catch (QueueFullException)
         {
             context.Response.Headers.RetryAfter = "30";
+
             return Results.Problem(statusCode: 429, title: "Очередь заполнена. Повторите запрос позже.");
         }
         catch (BadHttpRequestException exception)
@@ -104,9 +106,38 @@ public static class AlertWebhookEndpoints
         }
         catch (Exception exception) when (IsDatabaseFailure(exception))
         {
-            logger.LogWarning("Не удалось сохранить webhook {RequestId}: {ErrorType}", context.TraceIdentifier, exception.GetType().Name);
+            logger.LogWarning(
+                "Не удалось сохранить webhook {RequestId}: {ErrorType}",
+                context.TraceIdentifier,
+                exception.GetType().Name);
+
             return Results.Problem(statusCode: 503, title: "Хранилище очереди временно недоступно.");
         }
+    }
+
+    private static async Task<AlertWebhookRequest> ReadRequestAsync(
+        HttpRequest request,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        using var body = new MemoryStream();
+        byte[] buffer = new byte[8192];
+        int read;
+
+        while ((read = await request.Body.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            if (body.Length + read > limit)
+            {
+                throw new BadHttpRequestException("Превышен размер запроса.", StatusCodes.Status413PayloadTooLarge);
+            }
+
+            body.Write(buffer, 0, read);
+        }
+
+        body.Position = 0;
+
+        return await JsonSerializer.DeserializeAsync<AlertWebhookRequest>(body, s_jsonOptions, cancellationToken)
+            ?? throw new WebhookValidationException("Требуется JSON-объект уведомления.");
     }
 
     private static bool IsDatabaseFailure(Exception exception)

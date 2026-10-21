@@ -64,11 +64,11 @@ namespace JabberAlertBridge.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_attempt_at");
 
-                    b.Property<string>("RoomJid")
+                    b.Property<string>("RecipientJid")
                         .IsRequired()
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
-                        .HasColumnName("room_jid");
+                        .HasColumnName("recipient_jid");
 
                     b.Property<DateTimeOffset?>("SentAt")
                         .HasColumnType("timestamp with time zone")
@@ -107,6 +107,9 @@ namespace JabberAlertBridge.Infrastructure.Persistence.Migrations
                     b.HasIndex("Sequence")
                         .IsUnique()
                         .HasDatabaseName("ix_outgoing_active")
+                        .HasFilter("status IN ('pending', 'processing')");
+
+                    b.HasIndex("RecipientJid", "Sequence")
                         .HasFilter("status IN ('pending', 'processing')");
 
                     b.ToTable("outgoing_messages", null, t =>
